@@ -1,24 +1,23 @@
-# This action runs all common tooling for foundry repos
-# It does not comment any results though.
-# If you want to have comments on your repo, also install comment.yml
 name: Test
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 on:
   pull_request:
-  push:
-    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  lint:
-    uses: aave-dao/github-workflows/.github/workflows/foundry-lint.yml@main
-  test:
-    uses: aave-dao/github-workflows/.github/workflows/foundry-test.yml@main
-    secrets:
-      ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
-# only when the repo has zksync code
-#  test-zk:
-#    uses: aave-dao/github-workflows/.github/workflows/foundry-test-zk.yml@main
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build attacker-controlled content artifact
+        run: |
+          mkdir -p out
+          printf '%s\n' "${{ github.event.pull_request.number }}" > out/pr_number.txt
+          echo "benign report" > out/report.txt
+          printf 'payload\n' > 'out/$(id).txt'
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: content
+          path: out
